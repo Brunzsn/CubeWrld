@@ -164,6 +164,6 @@ export const identifyPLL = (topPieces: CubieState[], topCenter: CubieState): str
         // Edge case: If we have 4 headlights but weird bar count (shouldn't happen in standard PLL), default to H/Z logic or Unknown
         return "PLL (Z)"; 
     }
-
+ 
     return "Unknown";
 };
