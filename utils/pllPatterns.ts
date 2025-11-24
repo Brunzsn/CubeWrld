@@ -31,18 +31,18 @@ const getStickerColor = (cubie: CubieState, direction: THREE.Vector3): string | 
     ];
 
     // 1. Filter to stickers that physically exist on this piece based on initial position
+    // Use epsilon for float comparison safety, though initial positions should be integers.
     const validNormals = localNormals.filter(n => {
         const p = cubie.initialPosition;
-        // A sticker exists if the initial position matches the normal axis
-        if (n.vec.x !== 0 && Math.round(p[0]) !== n.vec.x) return false;
-        if (n.vec.y !== 0 && Math.round(p[1]) !== n.vec.y) return false;
-        if (n.vec.z !== 0 && Math.round(p[2]) !== n.vec.z) return false;
+        if (n.vec.x !== 0 && Math.abs(p[0] - n.vec.x) > 0.1) return false;
+        if (n.vec.y !== 0 && Math.abs(p[1] - n.vec.y) > 0.1) return false;
+        if (n.vec.z !== 0 && Math.abs(p[2] - n.vec.z) > 0.1) return false;
         return true;
     });
 
     // 2. Find the sticker that is currently facing the requested direction
     let bestColor = null;
-    let maxDot = 0.8; // Threshold for alignment
+    let maxDot = 0.9; // Strict threshold for alignment (approx 25 degrees)
 
     for (const n of validNormals) {
         // Rotate normal by the piece's current rotation
@@ -65,6 +65,7 @@ export const identifyPLL = (topPieces: CubieState[], topCenter: CubieState): str
     const up = new THREE.Vector3(...topCenter.initialPosition).normalize().applyQuaternion(topCenter.quaternion);
     
     // Find the 4 side directions (perpendicular to Up)
+    // Use standard basis vectors as candidates
     const candidates = [
         new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0),
         new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1,0),
@@ -88,6 +89,7 @@ export const identifyPLL = (topPieces: CubieState[], topCenter: CubieState): str
         let e: string | null = null;
 
         // Get sticker colors facing this direction
+        // Ensure we handle corner ordering consistently (irrelevant for equality check but good for debug)
         if (faceCorners.length === 2) {
             c1 = getStickerColor(faceCorners[0], dir);
             c2 = getStickerColor(faceCorners[1], dir);
@@ -96,13 +98,18 @@ export const identifyPLL = (topPieces: CubieState[], topCenter: CubieState): str
             e = getStickerColor(faceEdge, dir);
         }
 
+        // Strict Bar Logic: All 3 stickers must be visible and identical
+        const isBar = (!!c1 && !!c2 && !!e && c1 === c2 && c1 === e);
+        // Headlights: Both corners visible and identical
+        const isHeadlights = (!!c1 && !!c2 && c1 === c2);
+
         return {
             dir,
             c1,
             c2,
             e,
-            isHeadlights: (c1 && c2 && c1 === c2),
-            isBar: (c1 && c2 && e && c1 === c2 && c1 === e)
+            isHeadlights,
+            isBar
         };
     });
 
@@ -111,18 +118,32 @@ export const identifyPLL = (topPieces: CubieState[], topCenter: CubieState): str
 
     // --- Detection Logic ---
 
-    if (headlightsCount === 0) return "Diagonal";
-    if (headlightsCount === 1) return "Headlights"; // Standard T, J, A, etc.
+    // Standard PLL Identification
+    if (headlightsCount === 0) return "Diagonal"; // E-Perm or V-Perm equivalent (no headlights)
+    if (headlightsCount === 1) return "Headlights"; // T, J, A, R, F, etc.
     
     // If 4 Headlights, we are in EPLL (H, Z, U) or Solved state.
     if (headlightsCount === 4) {
         
         // STRICT Solved Check: All faces must have matching Corner-Edge-Corner bars.
-        if (solvedBarsCount === 4) return "Solved";
+        if (solvedBarsCount === 4) {
+            // Verify color diversity: Ensure we aren't seeing the same color on all faces due to a bug
+            const distinctColors = new Set(faces.map(f => f.c1));
+            // A solved cube side layer must have 4 distinct colors
+            if (distinctColors.size === 4) {
+                return "Solved";
+            }
+            // Fallback if colors are suspicious (shouldn't happen on valid cube)
+            return "Unknown";
+        }
 
         // H vs Z Perm (Usually 0 bars, sometimes chance alignments if logic is loose, but strictly 0 bars for H/Z)
         if (solvedBarsCount === 0) {
             // Look at any face to distinguish H (Opposite Swap) from Z (Adjacent Swap)
+            // H-Perm: Edge color is Opposite to Corner color on ALL faces.
+            // Z-Perm: Edge color is Adjacent on 2 faces, Opposite on 0? No, Z perm swaps adjacent edges.
+            
+            // Just check one valid face
             const face = faces.find(f => f.c1 && f.e);
             if (face && face.c1 && face.e) {
                 return isOppositeColor(face.c1, face.e) ? "PLL (H)" : "PLL (Z)";
@@ -137,31 +158,31 @@ export const identifyPLL = (topPieces: CubieState[], topCenter: CubieState): str
             
             if (backFace) {
                 const backDir = backFace.dir;
+                // Front is opposite to Back
                 const frontDir = backDir.clone().negate();
                 
                 // Find Front Face (Opposite to Bar)
                 const frontFace = faces.find(f => f.dir.dot(frontDir) > 0.9);
                 
-                // Find Right Face (relative to Front)
-                // Right = Cross(Up, Front) assuming standard basis
-                const rightDir = new THREE.Vector3().crossVectors(up, frontDir);
+                // Find Right Face (Right of Front). Assumes standard Up vector.
+                const rightDir = new THREE.Vector3().crossVectors(up, frontDir); // Right-handed Cross Product
                 const rightFace = faces.find(f => f.dir.dot(rightDir) > 0.9);
 
                 if (frontFace && rightFace && frontFace.e && rightFace.c1) {
-                    // Ua: Edge cycles Front -> Left -> Back -> Right -> Front?
-                    // Standard Ua (Clockwise edges): Right Edge -> Front. Front Edge -> Left. Left Edge -> Right.
-                    // Wait, standard Ua: R->F, F->L, L->R.
-                    // So the piece AT Front comes FROM Right.
-                    // So Front Edge Color == Right Face Color.
+                    // U-Perm Logic:
+                    // Look at the Front Face (opposite the solved bar).
+                    // If the Edge on the Front Face matches the Corner on the Right Face -> Ua (Clockwise cycle)
+                    // Else -> Ub
                     
-                    // Note: rightFace.c1 is the corner color on the Right Face, which determines the Face Color.
                     return frontFace.e === rightFace.c1 ? "PLL (Ua)" : "PLL (Ub)";
                 }
             }
             return "PLL (Ua)"; // Fallback
         }
         
-        // Edge case: If we have 4 headlights but weird bar count (shouldn't happen in standard PLL), default to H/Z logic or Unknown
+        // Edge case: If we have 4 headlights but weird bar count (e.g. 2 bars? Z perm with luck?)
+        // Standard Z-Perm often has 0 bars relative to corners if unaligned. 
+        // If aligned (AUF), Z perm has 0 bars.
         return "PLL (Z)"; 
     }
  

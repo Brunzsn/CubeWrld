@@ -1,3 +1,4 @@
+
 import * as THREE from 'three';
 import { CubieState, AnalysisResult, Phase, COLORS } from '../types';
 import { identify2LookOLL } from './ollPatterns';
@@ -119,6 +120,7 @@ export const analyzeCube = (cubies: CubieState[]): AnalysisResult => {
         });
 
         if (topCenter) {
+            // Filter for pieces that belong to the top layer (based on initial position matching top center)
             const topPieces = [...edges, ...corners].filter(p => {
                  const tVec = new THREE.Vector3(...topCenter.initialPosition);
                  const pVec = new THREE.Vector3(...p.initialPosition);

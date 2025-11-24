@@ -6,29 +6,6 @@ import { CubeModel } from './CubeModel';
 import { Move, CubieState } from '../types';
 import { getNotationMove } from '../utils/cubeLogic';
 
-// Augment global JSX for R3F elements
-declare module 'react' {
-  namespace JSX {
-    interface IntrinsicElements {
-      color: any;
-      ambientLight: any;
-      spotLight: any;
-      pointLight: any;
-    }
-  }
-}
-
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      color: any;
-      ambientLight: any;
-      spotLight: any;
-      pointLight: any;
-    }
-  }
-}
-
 interface SceneProps {
   isScrambling: boolean;
   onScrambleComplete: () => void;
